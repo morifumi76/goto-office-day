@@ -65,6 +65,8 @@
   .day.empty{ cursor:default; }
   .day.holiday{ background:var(--holiday-bg); color:var(--holiday-text); }
   .day.on{ background:var(--yellow); border-color:var(--yellow-border); color:var(--text); font-weight:600; }
+  /* 祝日・土日を出社日に塗った場合：黄色のまま、数字だけ赤くして「休みなのに出社」と分かるようにする */
+  .day.holiday.on{ color:var(--holiday-text); }
   .day.today{ outline:2px solid var(--today); outline-offset:-2px; }
   /* 過去の日付はうっすら薄く（これからの出社日に視線を向ける）。塗り・今日枠は残す */
   .day.past{ opacity:.45; }
