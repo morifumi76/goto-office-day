@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>出社カレンダー</title>
+<style>
+  /* ===== 配色（ライトテーマ） ===== */
+  :root{
+    --yellow:#ffe066;          /* 出社日の塗り */
+    --yellow-border:#f5c518;   /* 出社日の枠 */
+    --today:#3b82f6;           /* 今日の枠線（青） */
+    --holiday-bg:#fdeaea;      /* 土日祝の背景（うっすら赤） */
+    --holiday-text:#c0392b;    /* 土日祝の文字 */
+    --text:#37352f;            /* 通常の文字（Notion標準の黒） */
+    --muted:#9b9a97;           /* 補足テキスト（曜日・カウント） */
+    --bg:#ffffff;              /* 全体背景 */
+    --hover:#f1f1ef;           /* マウスホバー時 */
+    --sat:#2f80ed;             /* 土曜の曜日見出し */
+    --sun:#eb5757;             /* 日曜の曜日見出し */
+  }
+
+  /* ===== 配色（ダークテーマ：Notionのダークモードに馴染ませる） ===== */
+  @media (prefers-color-scheme: dark){
+    :root{
+      --yellow:#9c8728;         /* 暗い背景でも沈まない出社日色 */
+      --yellow-border:#d8b620;
+      --today:#5b9bff;
+      --holiday-bg:#3a2526;     /* うっすら赤（暗め） */
+      --holiday-text:#ff9a8d;
+      --text:#e9e8e6;
+      --muted:#8d8b86;
+      --bg:#191919;
+      --hover:#2a2a2a;
+      --sat:#6ea8ff;
+      --sun:#ff7a7a;
+    }
+  }
+
+  *{ box-sizing:border-box; }
+  body{
+    font-family:-apple-system,"Helvetica Neue","Hiragino Sans",sans-serif;
+    margin:0; padding:16px; background:var(--bg); color:var(--text);
+  }
+
+  .wrap{ display:flex; gap:16px; flex-wrap:wrap; justify-content:center; }
+  .month{ flex:1 1 260px; max-width:320px; min-width:230px; }
+  .month h2{ font-size:15px; text-align:center; margin:0 0 8px; }
+  .count{ font-size:12px; color:var(--muted); font-weight:normal; }
+
+  table{ width:100%; border-collapse:collapse; table-layout:fixed; }
+  th{ font-size:11px; color:var(--muted); padding:4px 0; font-weight:600; }
+  th.sat{ color:var(--sat); } th.sun{ color:var(--sun); }
+  td{ text-align:center; padding:1px; }
+
+  .day{
+    width:100%; aspect-ratio:1/1; border:1px solid transparent;
+    background:transparent; border-radius:8px; cursor:pointer;
+    font-size:13px; color:var(--text); display:flex;
+    align-items:center; justify-content:center; transition:background .12s;
+    font-family:inherit;
+  }
+  .day:hover{ background:var(--hover); }
+  .day:focus-visible{ outline:2px solid var(--today); outline-offset:1px; }
+  .day.empty{ cursor:default; }
+  .day.holiday{ background:var(--holiday-bg); color:var(--holiday-text); }
+  .day.on{ background:var(--yellow); border-color:var(--yellow-border); color:var(--text); font-weight:600; }
+  .day.today{ outline:2px solid var(--today); outline-offset:-2px; }
+  /* 過去の日付はうっすら薄く（これからの出社日に視線を向ける）。塗り・今日枠は残す */
+  .day.past{ opacity:.45; }
+  .day.past.on{ opacity:.7; }
+</style>
+</head>
+<body>
+  <div class="wrap" id="wrap"></div>
+<script>
+  // ===== 設定（基本ここだけ触ればOK） =====
+  const STORAGE_KEY = "nagoya-shukkin-days"; // 保存名（localStorageのキー）
+  const WEEK = ["月","火","水","木","金","土","日"]; // 月曜始まり
+
+  // 祝日・休日（内閣府の確定値）。
+  // 毎年2月ごろに翌年分が確定するので、年明けに1行追記してね（土日は自動判定なので不要）。
+  const HOLIDAYS = new Set([
+    // 2026年
+    "2026-01-01","2026-01-12","2026-02-11","2026-02-23","2026-03-20",
+    "2026-04-29","2026-05-03","2026-05-04","2026-05-05","2026-05-06",
+    "2026-07-20","2026-08-11","2026-09-21","2026-09-22","2026-09-23",
+    "2026-10-12","2026-11-03","2026-11-23",
+    // 2027年
+    "2027-01-01","2027-01-11","2027-02-11","2027-02-23","2027-03-21",
+    "2027-03-22","2027-04-29","2027-05-03","2027-05-04","2027-05-05",
+    "2027-07-19","2027-08-11","2027-09-20","2027-09-23","2027-10-11",
+    "2027-11-03","2027-11-23"
+  ]);
+  // ===================================
+
+  // localStorageの読み書き（壊れた値でも落ちないように try-catch）
+  function loadDays(){
+    try{ return new Set(JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]")); }
+    catch(e){ return new Set(); }
+  }
+  function saveDays(set){
+    try{ localStorage.setItem(STORAGE_KEY, JSON.stringify([...set])); }
+    catch(e){ /* 保存できなくても操作は続行できるようにする */ }
+  }
+
+  // 日付を "YYYY-MM-DD" 文字列に変換（保存キーとして使う）
+  function ymd(y,m,d){ return `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`; }
+
+  // 指定した年月の出社日数を数える
+  function countInMonth(y,m){
+    const prefix=`${y}-${String(m+1).padStart(2,"0")}-`;
+    let c=0; selected.forEach(k=>{ if(k.startsWith(prefix)) c++; });
+    return c;
+  }
+
+  const selected = loadDays();
+  const today = new Date();
+  const todayStr = ymd(today.getFullYear(), today.getMonth(), today.getDate());
+
+  // 表示する3ヶ月（今月・来月・再来月）の {年, 月} を計算
+  function targetMonths(){
+    const list=[];
+    for(let i=0;i<3;i++){
+      const base=today.getMonth()+i;
+      const y=today.getFullYear()+Math.floor(base/12);
+      const m=((base%12)+12)%12; // 0〜11に正規化（年またぎも自動）
+      list.push({y,m});
+    }
+    return list;
+  }
+
+  // 1ヶ月分のカレンダーを組み立てる
+  function buildMonth(year, month){
+    const box=document.createElement("div"); box.className="month";
+
+    const title=document.createElement("h2");
+    const setTitle=()=> title.innerHTML=`${year}年 ${month+1}月 <span class="count">（出社 ${countInMonth(year,month)}日）</span>`;
+    setTitle(); box.appendChild(title);
+
+    const table=document.createElement("table");
+
+    // 曜日の見出し行
+    const trh=document.createElement("tr");
+    WEEK.forEach((w,i)=>{
+      const th=document.createElement("th"); th.textContent=w; th.scope="col";
+      if(i===5)th.className="sat"; if(i===6)th.className="sun";
+      trh.appendChild(th);
+    });
+    table.appendChild(trh);
+
+    const firstWeekday=(new Date(year,month,1).getDay()+6)%7; // 月曜=0 に変換
+    const lastDate=new Date(year,month+1,0).getDate();
+    let date=1;
+
+    for(let row=0; row<6; row++){
+      const tr=document.createElement("tr");
+      for(let col=0; col<7; col++){
+        const td=document.createElement("td");
+        if(row*7+col<firstWeekday || date>lastDate){
+          // 月初の空白・月末以降の空白マス
+          const e=document.createElement("div"); e.className="day empty"; td.appendChild(e);
+        } else {
+          const d=date, key=ymd(year,month,d);
+          const dow=new Date(year,month,d).getDay(); // 0=日, 6=土
+          const isHoliday = (dow===0 || dow===6 || HOLIDAYS.has(key));
+
+          const btn=document.createElement("button");
+          btn.className="day"; btn.textContent=d; btn.type="button";
+
+          if(isHoliday) btn.classList.add("holiday");
+          if(selected.has(key)) btn.classList.add("on");
+          if(key===todayStr) btn.classList.add("today");
+          if(key < todayStr) btn.classList.add("past"); // 過去の日付はうっすら薄く
+
+          // 読み上げ用ラベルとトグル状態（アクセシビリティ）
+          btn.setAttribute("aria-label", `${year}年${month+1}月${d}日${isHoliday?"（休み）":""}`);
+          btn.setAttribute("aria-pressed", selected.has(key) ? "true" : "false");
+
+          // クリックで出社日をトグル（黄色 ⇄ 解除）
+          btn.addEventListener("click", ()=>{
+            if(selected.has(key)){
+              selected.delete(key); btn.classList.remove("on"); btn.setAttribute("aria-pressed","false");
+            } else {
+              selected.add(key); btn.classList.add("on"); btn.setAttribute("aria-pressed","true");
+            }
+            saveDays(selected); setTitle();
+          });
+
+          td.appendChild(btn); date++;
+        }
+        tr.appendChild(td);
+      }
+      table.appendChild(tr);
+      if(date>lastDate) break; // 残りの空行は作らない
+    }
+    box.appendChild(table);
+    return box;
+  }
+
+  // 全体を描画
+  function render(){
+    const wrap=document.getElementById("wrap"); wrap.innerHTML="";
+    targetMonths().forEach(({y,m})=> wrap.appendChild(buildMonth(y,m)));
+  }
+
+  render();
+</script>
+</body>
+</html>

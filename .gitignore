@@ -1,0 +1,13 @@
+# macOS
+.DS_Store
+
+# 依存パッケージ
+node_modules/
+
+# 環境変数（APIキー等）
+.env
+.env.local
+.env.*.local
+
+# ログ
+*.log
