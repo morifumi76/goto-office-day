@@ -171,6 +171,41 @@
     render();
   }
 
+  // 今の状態（出社・帰省）を1つの文字列にまとめる。再取得した内容と同じか比べるのに使う。
+  function signature(office_, home_){
+    return [...office_].sort().join(",") + "|" + [...home_].sort().join(",");
+  }
+
+  // ===== 同期の状態管理 =====
+  let pendingWrites = 0;               // 送信中（保存中）の件数
+  let writeSeq = 0;                    // 変更のたびに増える通し番号。古い取得結果を捨てる判定に使う
+  let writeChain = Promise.resolve();  // 保存を1件ずつ順番に実行するための待ち行列
+
+  // 1日分の変更をサーバーへ順番に保存する（連打しても順序が崩れない）
+  function queueWrite(date, type){
+    writeSeq++;
+    pendingWrites++;
+    writeChain = writeChain
+      .then(()=> pushChange(date, type))
+      .catch(()=> setStatus("保存に失敗しました（通信エラー）", true))
+      .finally(()=>{ pendingWrites--; });
+  }
+
+  // サーバーから最新データを取得して画面へ反映する。
+  // ただし保存中・取得中に変更があった場合は、古いデータで上書きしないよう破棄する。
+  function refresh(){
+    if(pendingWrites > 0) return Promise.resolve(); // 保存中は触らない
+    const seq = writeSeq;                            // 取得開始時点の番号を覚えておく
+    return fetchData().then(data=>{
+      // 取得している間に手元で変更があった／保存が始まったら、その結果は古いので捨てる
+      if(seq !== writeSeq || pendingWrites > 0) return;
+      // 中身が今と同じなら、塗り直さない（無駄なちらつき・操作の邪魔を防ぐ）
+      const incoming = signature(new Set(data.office || []), new Set(data.home || []));
+      if(incoming !== signature(office, home)) applyData(data);
+      setStatus("", false);
+    });
+  }
+
   const today = new Date();
   const todayStr = ymd(today.getFullYear(), today.getMonth(), today.getDate());
 
@@ -254,9 +289,9 @@
             }
             setA11y();
             cacheLocal(); setTitle();
-            // SYNC_URL が設定されていればサーバーにも保存（失敗しても画面の操作は続けられる）
+            // SYNC_URL が設定されていればサーバーにも順番に保存（失敗しても画面の操作は続けられる）
             if(SYNC_URL){
-              pushChange(key, newType).catch(()=> setStatus("保存に失敗しました（通信エラー）", true));
+              queueWrite(key, newType);
             }
           });
 
@@ -283,13 +318,12 @@
   // SYNC_URL があれば、サーバーの最新データで上書きして共有状態にする
   if(SYNC_URL){
     setStatus("同期中…", false);
-    fetchData()
-      .then(data=>{ applyData(data); setStatus("", false); })
-      .catch(()=> setStatus("同期できませんでした（この端末の表示のままです）", true));
+    refresh().catch(()=> setStatus("同期できませんでした（この端末の表示のままです）", true));
 
-    // 別端末で更新された内容を拾うため、タブに戻ってきたら静かに再取得する
-    window.addEventListener("focus", ()=>{
-      fetchData().then(applyData).catch(()=>{ /* 失敗時は黙って従来表示のまま */ });
+    // 別端末で更新された内容を拾うため、タブを切り替えて戻ってきたとき（=再表示時）だけ静かに再取得する。
+    // iframe内のクリックでは発火しないので、操作中に勝手に色が塗り替わることはない。
+    document.addEventListener("visibilitychange", ()=>{
+      if(document.visibilityState === "visible") refresh().catch(()=>{});
     });
   }
 </script>
