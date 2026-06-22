@@ -226,7 +226,7 @@
     const box=document.createElement("div"); box.className="month";
 
     const title=document.createElement("h2");
-    const setTitle=()=> title.innerHTML=`${year}年 ${month+1}月 <span class="count">（出社 ${countInMonth(office,year,month)}日・${HOME_LABEL} ${countInMonth(home,year,month)}日）</span>`;
+    const setTitle=()=> title.innerHTML=`${year}年 ${month+1}月 <span class="count">（出社 ${countInMonth(office,year,month)}日）</span>`;
     setTitle(); box.appendChild(title);
 
     const table=document.createElement("table");
