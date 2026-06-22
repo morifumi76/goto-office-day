@@ -78,15 +78,23 @@
   .day.past{ opacity:.45; }
   .day.past.on,
   .day.past.home{ opacity:.7; }
+
+  /* 同期の状態表示（通常は控えめ、エラー時だけ赤く） */
+  .status{ text-align:center; font-size:11px; color:var(--muted); min-height:1.2em; margin:8px 0 0; }
+  .status.error{ color:var(--sun); }
 </style>
 </head>
 <body>
   <div class="wrap" id="wrap"></div>
+  <p id="status" class="status" role="status" aria-live="polite"></p>
 <script>
   // ===== 設定（基本ここだけ触ればOK） =====
   const STORAGE_KEY = "nagoya-shukkin-days";   // 出社日の保存名（localStorageのキー）
   const HOME_STORAGE_KEY = "nagoya-kisei-days"; // 帰省日（家に行く日）の保存名
   const HOME_LABEL = "帰省";                    // 緑の予定の呼び名（「実家」「岡山」などに変えてOK）
+  // 複数端末で色を共有したいときは、Apps ScriptのウェブアプリURL（末尾 /exec）をここに貼る。
+  // 空のままなら、従来どおりこの端末の中だけに保存する（設定方法は docs/sync-setup.md 参照）。
+  const SYNC_URL = "";
   const WEEK = ["月","火","水","木","金","土","日"]; // 月曜始まり
 
   // 祝日・休日（内閣府の確定値）。
@@ -127,6 +135,42 @@
 
   const office = loadDays(STORAGE_KEY);     // 黄色：出社日
   const home   = loadDays(HOME_STORAGE_KEY); // 緑：帰省日
+
+  // 端末内のキャッシュに保存（オフラインでも直前の状態を表示できるようにする）
+  function cacheLocal(){
+    saveDays(STORAGE_KEY, office);
+    saveDays(HOME_STORAGE_KEY, home);
+  }
+
+  // 画面下の状態メッセージを表示（isError=true で赤く）
+  function setStatus(msg, isError){
+    const el = document.getElementById("status");
+    el.textContent = msg || "";
+    el.classList.toggle("error", !!isError);
+  }
+
+  // サーバー（Apps Script）から全データを読み込む → {office:[...], home:[...]}
+  async function fetchData(){
+    const res = await fetch(SYNC_URL, { method:"GET" });
+    if(!res.ok) throw new Error("読み込み失敗 " + res.status);
+    return await res.json();
+  }
+
+  // 1日分の変更をサーバーへ保存（type は "office" / "home" / "none"）。
+  // 本文を文字列で送ると Content-Type が text/plain になり、CORSの事前確認(preflight)を避けられる。
+  async function pushChange(date, type){
+    const res = await fetch(SYNC_URL, { method:"POST", body: JSON.stringify({ date, type }) });
+    if(!res.ok) throw new Error("保存失敗 " + res.status);
+  }
+
+  // サーバーから受け取ったデータで画面を置き換える
+  function applyData(data){
+    office.clear(); (data.office || []).forEach(k=> office.add(k));
+    home.clear();   (data.home   || []).forEach(k=> home.add(k));
+    cacheLocal();
+    render();
+  }
+
   const today = new Date();
   const todayStr = ymd(today.getFullYear(), today.getMonth(), today.getDate());
 
@@ -196,19 +240,24 @@
 
           // クリックで3状態をトグル（黄色＝出社 → 緑＝帰省 → 解除）
           btn.addEventListener("click", ()=>{
+            let newType;
             if(office.has(key)){
               // 黄色 → 緑
               office.delete(key); home.add(key);
-              btn.classList.remove("on"); btn.classList.add("home");
+              btn.classList.remove("on"); btn.classList.add("home"); newType="home";
             } else if(home.has(key)){
               // 緑 → 解除
-              home.delete(key); btn.classList.remove("home");
+              home.delete(key); btn.classList.remove("home"); newType="none";
             } else {
               // 解除 → 黄色
-              office.add(key); btn.classList.add("on");
+              office.add(key); btn.classList.add("on"); newType="office";
             }
             setA11y();
-            saveDays(STORAGE_KEY, office); saveDays(HOME_STORAGE_KEY, home); setTitle();
+            cacheLocal(); setTitle();
+            // SYNC_URL が設定されていればサーバーにも保存（失敗しても画面の操作は続けられる）
+            if(SYNC_URL){
+              pushChange(key, newType).catch(()=> setStatus("保存に失敗しました（通信エラー）", true));
+            }
           });
 
           td.appendChild(btn); date++;
@@ -228,7 +277,21 @@
     targetMonths().forEach(({y,m})=> wrap.appendChild(buildMonth(y,m)));
   }
 
+  // まずは端末内のキャッシュで即表示（待たせない）
   render();
+
+  // SYNC_URL があれば、サーバーの最新データで上書きして共有状態にする
+  if(SYNC_URL){
+    setStatus("同期中…", false);
+    fetchData()
+      .then(data=>{ applyData(data); setStatus("", false); })
+      .catch(()=> setStatus("同期できませんでした（この端末の表示のままです）", true));
+
+    // 別端末で更新された内容を拾うため、タブに戻ってきたら静かに再取得する
+    window.addEventListener("focus", ()=>{
+      fetchData().then(applyData).catch(()=>{ /* 失敗時は黙って従来表示のまま */ });
+    });
+  }
 </script>
 </body>
 </html>

@@ -9,6 +9,7 @@
 - スタイル: 単一HTMLファイル内にCSS/JSを同梱（外部ライブラリ・CDN・ビルド工程なし）
 - デプロイ先: GitHub Pages
 - その他: localStorage で保存（保存キー: 出社日=`nagoya-shukkin-days`、帰省日=`nagoya-kisei-days`）
+- 複数端末で共有する場合: `SYNC_URL` に Apps Script のURLを設定すると、Googleスプレッドシートに保存して共有する（未設定なら従来どおり端末内のみ）。サーバー側コードは `docs/sync-apps-script.gs`、設定手順は `docs/sync-setup.md`。
 
 ## フォルダ構成
 ```
@@ -33,4 +34,4 @@ goto-office-day/
 - Notion（`/embed` で埋め込み表示）
 
 ## 現在の状態
-初版実装完了。`src/index.html` に3ヶ月カレンダーを実装（仕様 + ダークモード対応・過去日付の減光・アクセシビリティ強化）。出社（黄）に加え帰省（緑）の3状態トグルに対応。
+初版実装完了。`src/index.html` に3ヶ月カレンダーを実装（仕様 + ダークモード対応・過去日付の減光・アクセシビリティ強化）。出社（黄）に加え帰省（緑）の3状態トグルに対応。`SYNC_URL` 設定でGoogleスプレッドシート経由の複数端末共有にも対応（任意）。
