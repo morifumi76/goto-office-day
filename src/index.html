@@ -9,6 +9,8 @@
   :root{
     --yellow:#ffe066;          /* 出社日の塗り */
     --yellow-border:#f5c518;   /* 出社日の枠 */
+    --green:#a8e6a1;           /* 帰省日の塗り */
+    --green-border:#4caf50;    /* 帰省日の枠 */
     --today:#3b82f6;           /* 今日の枠線（青） */
     --holiday-bg:#fdeaea;      /* 土日祝の背景（うっすら赤） */
     --holiday-text:#c0392b;    /* 土日祝の文字 */
@@ -25,6 +27,8 @@
     :root{
       --yellow:#9c8728;         /* 暗い背景でも沈まない出社日色 */
       --yellow-border:#d8b620;
+      --green:#3f7a44;          /* 暗い背景でも沈まない帰省日色 */
+      --green-border:#5fae63;
       --today:#5b9bff;
       --holiday-bg:#3a2526;     /* うっすら赤（暗め） */
       --holiday-text:#ff9a8d;
@@ -65,19 +69,24 @@
   .day.empty{ cursor:default; }
   .day.holiday{ background:var(--holiday-bg); color:var(--holiday-text); }
   .day.on{ background:var(--yellow); border-color:var(--yellow-border); color:var(--text); font-weight:600; }
-  /* 祝日・土日を出社日に塗った場合：黄色のまま、数字だけ赤くして「休みなのに出社」と分かるようにする */
-  .day.holiday.on{ color:var(--holiday-text); }
+  .day.home{ background:var(--green); border-color:var(--green-border); color:var(--text); font-weight:600; }
+  /* 祝日・土日を出社/帰省に塗った場合：塗りはそのまま、数字だけ赤くして「休みなのに予定あり」と分かるようにする */
+  .day.holiday.on,
+  .day.holiday.home{ color:var(--holiday-text); }
   .day.today{ outline:2px solid var(--today); outline-offset:-2px; }
-  /* 過去の日付はうっすら薄く（これからの出社日に視線を向ける）。塗り・今日枠は残す */
+  /* 過去の日付はうっすら薄く（これからの予定に視線を向ける）。塗り・今日枠は残す */
   .day.past{ opacity:.45; }
-  .day.past.on{ opacity:.7; }
+  .day.past.on,
+  .day.past.home{ opacity:.7; }
 </style>
 </head>
 <body>
   <div class="wrap" id="wrap"></div>
 <script>
   // ===== 設定（基本ここだけ触ればOK） =====
-  const STORAGE_KEY = "nagoya-shukkin-days"; // 保存名（localStorageのキー）
+  const STORAGE_KEY = "nagoya-shukkin-days";   // 出社日の保存名（localStorageのキー）
+  const HOME_STORAGE_KEY = "nagoya-kisei-days"; // 帰省日（家に行く日）の保存名
+  const HOME_LABEL = "帰省";                    // 緑の予定の呼び名（「実家」「岡山」などに変えてOK）
   const WEEK = ["月","火","水","木","金","土","日"]; // 月曜始まり
 
   // 祝日・休日（内閣府の確定値）。
@@ -97,26 +106,27 @@
   // ===================================
 
   // localStorageの読み書き（壊れた値でも落ちないように try-catch）
-  function loadDays(){
-    try{ return new Set(JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]")); }
+  function loadDays(key){
+    try{ return new Set(JSON.parse(localStorage.getItem(key) || "[]")); }
     catch(e){ return new Set(); }
   }
-  function saveDays(set){
-    try{ localStorage.setItem(STORAGE_KEY, JSON.stringify([...set])); }
+  function saveDays(key, set){
+    try{ localStorage.setItem(key, JSON.stringify([...set])); }
     catch(e){ /* 保存できなくても操作は続行できるようにする */ }
   }
 
   // 日付を "YYYY-MM-DD" 文字列に変換（保存キーとして使う）
   function ymd(y,m,d){ return `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`; }
 
-  // 指定した年月の出社日数を数える
-  function countInMonth(y,m){
+  // 指定した集合（出社 or 帰省）の、その年月の日数を数える
+  function countInMonth(set,y,m){
     const prefix=`${y}-${String(m+1).padStart(2,"0")}-`;
-    let c=0; selected.forEach(k=>{ if(k.startsWith(prefix)) c++; });
+    let c=0; set.forEach(k=>{ if(k.startsWith(prefix)) c++; });
     return c;
   }
 
-  const selected = loadDays();
+  const office = loadDays(STORAGE_KEY);     // 黄色：出社日
+  const home   = loadDays(HOME_STORAGE_KEY); // 緑：帰省日
   const today = new Date();
   const todayStr = ymd(today.getFullYear(), today.getMonth(), today.getDate());
 
@@ -137,7 +147,7 @@
     const box=document.createElement("div"); box.className="month";
 
     const title=document.createElement("h2");
-    const setTitle=()=> title.innerHTML=`${year}年 ${month+1}月 <span class="count">（出社 ${countInMonth(year,month)}日）</span>`;
+    const setTitle=()=> title.innerHTML=`${year}年 ${month+1}月 <span class="count">（出社 ${countInMonth(office,year,month)}日・${HOME_LABEL} ${countInMonth(home,year,month)}日）</span>`;
     setTitle(); box.appendChild(title);
 
     const table=document.createElement("table");
@@ -171,22 +181,34 @@
           btn.className="day"; btn.textContent=d; btn.type="button";
 
           if(isHoliday) btn.classList.add("holiday");
-          if(selected.has(key)) btn.classList.add("on");
+          if(office.has(key)) btn.classList.add("on");
+          else if(home.has(key)) btn.classList.add("home");
           if(key===todayStr) btn.classList.add("today");
           if(key < todayStr) btn.classList.add("past"); // 過去の日付はうっすら薄く
 
-          // 読み上げ用ラベルとトグル状態（アクセシビリティ）
-          btn.setAttribute("aria-label", `${year}年${month+1}月${d}日${isHoliday?"（休み）":""}`);
-          btn.setAttribute("aria-pressed", selected.has(key) ? "true" : "false");
+          // 読み上げ用ラベルとトグル状態（アクセシビリティ）を、現在の状態に合わせて設定する
+          const setA11y=()=>{
+            const state = office.has(key) ? "出社" : home.has(key) ? HOME_LABEL : "";
+            btn.setAttribute("aria-label", `${year}年${month+1}月${d}日${isHoliday?"（休み）":""}${state?"："+state:""}`);
+            btn.setAttribute("aria-pressed", (office.has(key)||home.has(key)) ? "true" : "false");
+          };
+          setA11y();
 
-          // クリックで出社日をトグル（黄色 ⇄ 解除）
+          // クリックで3状態をトグル（黄色＝出社 → 緑＝帰省 → 解除）
           btn.addEventListener("click", ()=>{
-            if(selected.has(key)){
-              selected.delete(key); btn.classList.remove("on"); btn.setAttribute("aria-pressed","false");
+            if(office.has(key)){
+              // 黄色 → 緑
+              office.delete(key); home.add(key);
+              btn.classList.remove("on"); btn.classList.add("home");
+            } else if(home.has(key)){
+              // 緑 → 解除
+              home.delete(key); btn.classList.remove("home");
             } else {
-              selected.add(key); btn.classList.add("on"); btn.setAttribute("aria-pressed","true");
+              // 解除 → 黄色
+              office.add(key); btn.classList.add("on");
             }
-            saveDays(selected); setTitle();
+            setA11y();
+            saveDays(STORAGE_KEY, office); saveDays(HOME_STORAGE_KEY, home); setTitle();
           });
 
           td.appendChild(btn); date++;
