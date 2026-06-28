@@ -11,6 +11,8 @@
     --yellow-border:#f5c518;   /* 出社日の枠 */
     --green:#a8e6a1;           /* 帰省日の塗り */
     --green-border:#4caf50;    /* 帰省日の枠 */
+    --gray:#d4d4d4;            /* 灰色の塗り */
+    --gray-border:#9b9a97;     /* 灰色の枠 */
     --today:#3b82f6;           /* 今日の枠線（青） */
     --holiday-bg:#fdeaea;      /* 土日祝の背景（うっすら赤） */
     --holiday-text:#c0392b;    /* 土日祝の文字 */
@@ -29,6 +31,8 @@
       --yellow-border:#d8b620;
       --green:#3f7a44;          /* 暗い背景でも沈まない帰省日色 */
       --green-border:#5fae63;
+      --gray:#4d4d4d;           /* 暗い背景でも沈まない灰色 */
+      --gray-border:#7a7a7a;
       --today:#5b9bff;
       --holiday-bg:#3a2526;     /* うっすら赤（暗め） */
       --holiday-text:#ff9a8d;
@@ -70,14 +74,17 @@
   .day.holiday{ background:var(--holiday-bg); color:var(--holiday-text); }
   .day.on{ background:var(--yellow); border-color:var(--yellow-border); color:var(--text); font-weight:600; }
   .day.home{ background:var(--green); border-color:var(--green-border); color:var(--text); font-weight:600; }
-  /* 祝日・土日を出社/帰省に塗った場合：塗りはそのまま、数字だけ赤くして「休みなのに予定あり」と分かるようにする */
+  .day.gray{ background:var(--gray); border-color:var(--gray-border); color:var(--text); font-weight:600; }
+  /* 祝日・土日を出社/帰省/灰色に塗った場合：塗りはそのまま、数字だけ赤くして「休みなのに予定あり」と分かるようにする */
   .day.holiday.on,
-  .day.holiday.home{ color:var(--holiday-text); }
+  .day.holiday.home,
+  .day.holiday.gray{ color:var(--holiday-text); }
   .day.today{ outline:2px solid var(--today); outline-offset:-2px; }
   /* 過去の日付はうっすら薄く（これからの予定に視線を向ける）。塗り・今日枠は残す */
   .day.past{ opacity:.45; }
   .day.past.on,
-  .day.past.home{ opacity:.7; }
+  .day.past.home,
+  .day.past.gray{ opacity:.7; }
 
   /* 同期の状態表示（通常は控えめ、エラー時だけ赤く） */
   .status{ text-align:center; font-size:11px; color:var(--muted); min-height:1.2em; margin:8px 0 0; }
@@ -92,6 +99,8 @@
   const STORAGE_KEY = "nagoya-shukkin-days";   // 出社日の保存名（localStorageのキー）
   const HOME_STORAGE_KEY = "nagoya-kisei-days"; // 帰省日（家に行く日）の保存名
   const HOME_LABEL = "帰省";                    // 緑の予定の呼び名（「実家」「岡山」などに変えてOK）
+  const GRAY_STORAGE_KEY = "nagoya-gray-days";  // 灰色の予定の保存名
+  const GRAY_LABEL = "その他";                  // 灰色の予定の呼び名（「在宅」「休み」などに変えてOK）
   // 複数端末で色を共有したいときは、Apps ScriptのウェブアプリURL（末尾 /exec）をここに貼る。
   // 空のままなら、従来どおりこの端末の中だけに保存する（設定方法は docs/sync-setup.md 参照）。
   const SYNC_URL = "https://script.google.com/macros/s/AKfycby0JN_P7-pb_ElWSUfdzwTcHp4o_wpV5v3zA2N7NwJQ57uOjO5VMghk6LUZrKk0Xn_U/exec";
@@ -133,13 +142,15 @@
     return c;
   }
 
-  const office = loadDays(STORAGE_KEY);     // 黄色：出社日
+  const office = loadDays(STORAGE_KEY);      // 黄色：出社日
   const home   = loadDays(HOME_STORAGE_KEY); // 緑：帰省日
+  const gray   = loadDays(GRAY_STORAGE_KEY); // 灰色：その他
 
   // 端末内のキャッシュに保存（オフラインでも直前の状態を表示できるようにする）
   function cacheLocal(){
     saveDays(STORAGE_KEY, office);
     saveDays(HOME_STORAGE_KEY, home);
+    saveDays(GRAY_STORAGE_KEY, gray);
   }
 
   // 画面下の状態メッセージを表示（isError=true で赤く）
@@ -149,14 +160,14 @@
     el.classList.toggle("error", !!isError);
   }
 
-  // サーバー（Apps Script）から全データを読み込む → {office:[...], home:[...]}
+  // サーバー（Apps Script）から全データを読み込む → {office:[...], home:[...], gray:[...]}
   async function fetchData(){
     const res = await fetch(SYNC_URL, { method:"GET" });
     if(!res.ok) throw new Error("読み込み失敗 " + res.status);
     return await res.json();
   }
 
-  // 1日分の変更をサーバーへ保存（type は "office" / "home" / "none"）。
+  // 1日分の変更をサーバーへ保存（type は "office" / "home" / "gray" / "none"）。
   // 本文を文字列で送ると Content-Type が text/plain になり、CORSの事前確認(preflight)を避けられる。
   async function pushChange(date, type){
     const res = await fetch(SYNC_URL, { method:"POST", body: JSON.stringify({ date, type }) });
@@ -167,13 +178,14 @@
   function applyData(data){
     office.clear(); (data.office || []).forEach(k=> office.add(k));
     home.clear();   (data.home   || []).forEach(k=> home.add(k));
+    gray.clear();   (data.gray   || []).forEach(k=> gray.add(k));
     cacheLocal();
     render();
   }
 
-  // 今の状態（出社・帰省）を1つの文字列にまとめる。再取得した内容と同じか比べるのに使う。
-  function signature(office_, home_){
-    return [...office_].sort().join(",") + "|" + [...home_].sort().join(",");
+  // 今の状態（出社・帰省・灰色）を1つの文字列にまとめる。再取得した内容と同じか比べるのに使う。
+  function signature(office_, home_, gray_){
+    return [...office_].sort().join(",") + "|" + [...home_].sort().join(",") + "|" + [...gray_].sort().join(",");
   }
 
   // ===== 同期の状態管理 =====
@@ -200,8 +212,8 @@
       // 取得している間に手元で変更があった／保存が始まったら、その結果は古いので捨てる
       if(seq !== writeSeq || pendingWrites > 0) return;
       // 中身が今と同じなら、塗り直さない（無駄なちらつき・操作の邪魔を防ぐ）
-      const incoming = signature(new Set(data.office || []), new Set(data.home || []));
-      if(incoming !== signature(office, home)) applyData(data);
+      const incoming = signature(new Set(data.office || []), new Set(data.home || []), new Set(data.gray || []));
+      if(incoming !== signature(office, home, gray)) applyData(data);
       setStatus("", false);
     });
   }
@@ -262,18 +274,19 @@
           if(isHoliday) btn.classList.add("holiday");
           if(office.has(key)) btn.classList.add("on");
           else if(home.has(key)) btn.classList.add("home");
+          else if(gray.has(key)) btn.classList.add("gray");
           if(key===todayStr) btn.classList.add("today");
           if(key < todayStr) btn.classList.add("past"); // 過去の日付はうっすら薄く
 
           // 読み上げ用ラベルとトグル状態（アクセシビリティ）を、現在の状態に合わせて設定する
           const setA11y=()=>{
-            const state = office.has(key) ? "出社" : home.has(key) ? HOME_LABEL : "";
+            const state = office.has(key) ? "出社" : home.has(key) ? HOME_LABEL : gray.has(key) ? GRAY_LABEL : "";
             btn.setAttribute("aria-label", `${year}年${month+1}月${d}日${isHoliday?"（休み）":""}${state?"："+state:""}`);
-            btn.setAttribute("aria-pressed", (office.has(key)||home.has(key)) ? "true" : "false");
+            btn.setAttribute("aria-pressed", (office.has(key)||home.has(key)||gray.has(key)) ? "true" : "false");
           };
           setA11y();
 
-          // クリックで3状態をトグル（黄色＝出社 → 緑＝帰省 → 解除）
+          // クリックで4状態をトグル（黄色＝出社 → 緑＝帰省 → 灰色 → 解除）
           btn.addEventListener("click", ()=>{
             let newType;
             if(office.has(key)){
@@ -281,8 +294,12 @@
               office.delete(key); home.add(key);
               btn.classList.remove("on"); btn.classList.add("home"); newType="home";
             } else if(home.has(key)){
-              // 緑 → 解除
-              home.delete(key); btn.classList.remove("home"); newType="none";
+              // 緑 → 灰色
+              home.delete(key); gray.add(key);
+              btn.classList.remove("home"); btn.classList.add("gray"); newType="gray";
+            } else if(gray.has(key)){
+              // 灰色 → 解除
+              gray.delete(key); btn.classList.remove("gray"); newType="none";
             } else {
               // 解除 → 黄色
               office.add(key); btn.classList.add("on"); newType="office";
