@@ -29,11 +29,11 @@ function ymd_(v) {
   return String(v).trim();
 }
 
-// 全データを読み出す → { office: [...], home: [...] }
+// 全データを読み出す → { office: [...], home: [...], gray: [...] }
 function readAll_() {
   const sh = getSheet_();
   const last = sh.getLastRow();
-  const office = [], home = [];
+  const office = [], home = [], gray = [];
   if (last >= 2) {
     const rows = sh.getRange(2, 1, last - 1, 2).getValues();
     rows.forEach(r => {
@@ -42,9 +42,10 @@ function readAll_() {
       if (!date) return;
       if (type === "office") office.push(date);
       else if (type === "home") home.push(date);
+      else if (type === "gray") gray.push(date);
     });
   }
-  return { office: office, home: home };
+  return { office: office, home: home, gray: gray };
 }
 
 // JSONを返す共通処理
@@ -78,7 +79,7 @@ function doPost(e) {
         }
       }
       // none 以外なら新しい行を追加
-      if (type === "office" || type === "home") {
+      if (type === "office" || type === "home" || type === "gray") {
         sh.appendRow([date, type]);
       }
     }
